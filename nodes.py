@@ -10,9 +10,9 @@ from diffusers import UniPCMultistepScheduler
 from diffusers.utils import export_to_video, load_image 
 from diffusers.image_processor import VaeImageProcessor
 
-from models.transformer_a2 import A2Model 
-from models.pipeline_a2 import A2Pipeline 
-from models.utils import _crop_and_resize_pad, write_mp4
+from SkyReelsA2.models.transformer_a2 import A2Model 
+from SkyReelsA2.models.pipeline_a2 import A2Pipeline 
+from SkyReelsA2.models.utils import _crop_and_resize_pad, write_mp4
 import hashlib
 import time
 
@@ -147,7 +147,143 @@ class ModelInference:
 infer = ModelInference()
 
 
+class A2ModelLoader:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "pipeline_path": ("STRING", {"default": "/maindata/data/shared/public/multimodal/ckpt/wan14B-compose"})
+            }
+        }
 
-    
+    RETURN_TYPES = ("A2Pipeline",)
+    FUNCTION = "load_model"
+    CATEGORY = "SkyReelsA2"
+
+    def load_model(self, pipeline_path):
+        model_path = os.path.join(pipeline_path, "transformer")
+        dtype = torch.bfloat16
+        device = "cuda"
+
+        image_encoder = CLIPVisionModel.from_pretrained(pipeline_path, subfolder="image_encoder", torch_dtype=torch.float32)
+        vae = AutoencoderKLWan.from_pretrained(pipeline_path, subfolder="vae", torch_dtype=torch.float32)
+        transformer = A2Model.from_pretrained(model_path, torch_dtype=dtype).to(device)
+
+        pipe = A2Pipeline.from_pretrained(
+            pipeline_path,
+            transformer=transformer,
+            vae=vae,
+            image_encoder=image_encoder,
+            torch_dtype=dtype
+        )
+
+        scheduler = UniPCMultistepScheduler(
+            prediction_type='flow_prediction',
+            use_flow_sigmas=True,
+            num_train_timesteps=1000,
+            flow_shift=8
+        )
+        pipe.scheduler = scheduler
+        pipe.to(device)
+
+        return (pipe,)
 
 
+class A2VideoGenerator:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "pipe": ("A2Pipeline",),
+                "ref_img_0": ("IMAGE",),
+                "ref_img_1": ("IMAGE",),
+                "ref_img_2": ("IMAGE",),
+                "prompt": ("STRING", {"default": "A man is gazing at the sunset by the seaside."}),
+                "negative_prompt": ("STRING", {"default": DEFAULT_NEGATIVE_PROMPT}),
+                "seed": ("INT", {"default": 42})
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE_SEQUENCE",)
+    OUTPUT_NODE = True
+    FUNCTION = "generate"
+    CATEGORY = "SkyReelsA2"
+
+    def generate(self, pipe, ref_img_0, ref_img_1, ref_img_2, prompt, negative_prompt, seed):
+        HEIGHT, WIDTH = 480, 832
+        NUM_FRAMES = 81
+        GUIDANCE_SCALE = 5.0
+        STEP = 50
+        VAE_SCALE_FACTOR_SPATIAL = 8
+
+        video_processor = VideoProcessor(vae_scale_factor=VAE_SCALE_FACTOR_SPATIAL)
+        device = "cuda"
+
+        clip_list, vae_list = [], []
+        for image in [ref_img_0, ref_img_1, ref_img_2]:
+            if image is None:
+                continue
+            clip = _crop_and_resize_pad(image, height=512, width=512)
+            clip_list.append(clip)
+            vae = _crop_and_resize_pad(image, height=HEIGHT, width=WIDTH)
+            vae = video_processor.preprocess(vae, height=HEIGHT, width=WIDTH).to(memory_format=torch.contiguous_format)
+            vae = vae.unsqueeze(2).to(device, dtype=torch.float32)
+            vae_list.append(vae)
+
+        generator = torch.Generator(device).manual_seed(seed)
+
+        video_pt = pipe(
+            image_clip=clip_list,
+            image_vae=vae_list,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            height=HEIGHT,
+            width=WIDTH,
+            num_frames=NUM_FRAMES,
+            guidance_scale=GUIDANCE_SCALE,
+            generator=generator,
+            output_type="pt",
+            num_inference_steps=STEP,
+            vae_combine="before"
+        ).frames
+
+        batch_size = video_pt.shape[0]
+        batch_video_frames = []
+
+        for batch_idx in range(batch_size):
+            pt_image = video_pt[batch_idx]
+            pt_image = torch.stack([pt_image[i] for i in range(pt_image.shape[0])])
+            image_np = VaeImageProcessor.pt_to_numpy(pt_image)
+            image_pil = VaeImageProcessor.numpy_to_pil(image_np)
+            batch_video_frames.append(image_pil)
+
+        video_generate = batch_video_frames[0]
+        final_images = []
+        for q in range(len(video_generate)):
+            frame = Image.fromarray(np.array(video_generate[q])).convert("RGB")
+            final_images.append(frame)
+
+        return (final_images,)
+
+
+class SaveMP4Video:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "frames": ("IMAGE_SEQUENCE",),
+                "prompt": ("STRING",),
+                "seed": ("INT",)
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "save_video"
+    CATEGORY = "SkyReelsA2"
+
+    def save_video(self, frames, prompt, seed):
+        name_src = f"{time.time()}_{prompt}_{seed}"
+        name = hashlib.md5(name_src.encode()).hexdigest()
+        video_path = os.path.join(TMP_FILE_PATH, f"{name}.mp4")
+        write_mp4(video_path, [np.array(f.convert("RGB")) for f in frames], fps=15)
+        return (video_path,)
