@@ -2,6 +2,7 @@ import os
 import torch 
 from PIL import Image 
 import numpy as np 
+from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
 from diffusers import AutoencoderKLWan
 from transformers import CLIPVisionModel 
 from diffusers.video_processor import VideoProcessor
@@ -21,6 +22,47 @@ if not os.path.exists(TMP_FILE_PATH):
     os.mkdir(TMP_FILE_PATH)
 
 DEFAULT_NEGATIVE_PROMPT = "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards"
+
+
+def _crop_and_resize_pad(image, height=480, width=720):
+    image = np.array(image)
+    image_height, image_width, _ = image.shape
+    if image_height / image_width < height / width:
+        pad = int((((height / width) * image_width) - image_height) / 2.)
+        padded_image = np.ones((image_height + pad * 2, image_width, 3), dtype=np.uint8) * 255
+        # padded_image = np.zeros((image_height + pad * 2, image_width, 3), dtype=np.uint8)
+        padded_image[pad:pad+image_height, :] = image
+        image = Image.fromarray(padded_image).resize((width, height))
+    else:
+        pad = int((((width / height) * image_height) - image_width) / 2.)
+        padded_image = np.ones((image_height, image_width + pad * 2, 3), dtype=np.uint8) * 255
+        # padded_image = np.zeros((image_height, image_width + pad * 2, 3), dtype=np.uint8) 
+        padded_image[:, pad:pad+image_width] = image
+        image = Image.fromarray(padded_image).resize((width, height))
+    return image 
+
+
+def _crop_and_resize(image, height=512, width=512):
+    image = np.array(image)
+    image_height, image_width, _ = image.shape
+    if image_height / image_width < height / width:
+        croped_width = int(image_height / height * width)
+        left = (image_width - croped_width) // 2
+        image = image[:, left: left+croped_width]
+        image = Image.fromarray(image).resize((width, height))
+    else:
+        croped_height = int(image_width/width*height)
+        top = (image_height - croped_height) // 2
+        image = image[top:top+croped_height, :]
+        image = Image.fromarray(image).resize((width, height))
+
+    return image
+    
+
+def write_mp4(video_path, samples, fps=14, audio_bitrate="192k"):
+    clip = ImageSequenceClip(samples, fps=fps)
+    clip.write_videofile(video_path, audio_codec="aac", audio_bitrate=audio_bitrate, 
+                         ffmpeg_params=["-crf", "18", "-preset", "slow"])
 
 
 WIDTH = 832
@@ -101,21 +143,11 @@ class ModelInference:
         write_mp4(video_path, final_images, fps=15)
         return video_path
 
-_HEADER_ = '''
-<div style="text-align: center; max-width: 650px; margin: 0 auto;">
-    <h1 style="font-size: 2.5rem; font-weight: 700; margin-bottom: 1rem; display: contents;">SkyReels-A2 Demo</h1>
-    <p style="font-size: 1rem; margin-bottom: 1.5rem;">Paper: <a href='' target='_blank'>SkyReels A2 </a> | Code: <a href='https://github.com/SkyworkAI/SkyReels-A2' target='_blank'>GitHub</a> | <a href='https://huggingface.co/Skywork/SkyReels-A2' target='_blank'>HugginceFace</a></p> 
-</div>
-'''
 
 infer = ModelInference()
 
-# def infer(*args):
-#     temp_video_path = '/maindata/data/user/yikun.dou/A2-clean/output_yikun.mp4'
-#     print(args[0])
-#     print(args[1])
-    
-#     return temp_video_path
+
+
     
 
 
