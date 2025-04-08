@@ -12,8 +12,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "LoadA2Model": "Load A2 Model",
     "ReferenceImages": "Reference Images",
     "A2VideoGenerator": "A2 Video Generator",
-    "CombineImages": Combine Images,
-    "SaveVideo": Save Video,
+    "CombineImages": "Combine Images",
+    "SaveVideo": "Save Video",
 } 
 
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
