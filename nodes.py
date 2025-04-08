@@ -1,8 +1,7 @@
-import os
 import torch 
+import os
 from PIL import Image 
 import numpy as np 
-from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
 from diffusers import AutoencoderKLWan
 from transformers import CLIPVisionModel 
 from diffusers.video_processor import VideoProcessor
@@ -12,181 +11,88 @@ from diffusers.image_processor import VaeImageProcessor
 
 from SkyReelsA2.models.transformer_a2 import A2Model 
 from SkyReelsA2.models.pipeline_a2 import A2Pipeline 
-from SkyReelsA2.models.utils import _crop_and_resize_pad, write_mp4
-import hashlib
-import time
+from SkyReelsA2.models.utils import _crop_and_resize_pad, _crop_and_resize, write_mp4
 
 
-TMP_FILE_PATH = os.path.join(os.path.dirname(__file__), "tmp")
-if not os.path.exists(TMP_FILE_PATH):
-    os.mkdir(TMP_FILE_PATH)
-
-DEFAULT_NEGATIVE_PROMPT = "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards"
-
-
-def _crop_and_resize_pad(image, height=480, width=720):
-    image = np.array(image)
-    image_height, image_width, _ = image.shape
-    if image_height / image_width < height / width:
-        pad = int((((height / width) * image_width) - image_height) / 2.)
-        padded_image = np.ones((image_height + pad * 2, image_width, 3), dtype=np.uint8) * 255
-        # padded_image = np.zeros((image_height + pad * 2, image_width, 3), dtype=np.uint8)
-        padded_image[pad:pad+image_height, :] = image
-        image = Image.fromarray(padded_image).resize((width, height))
-    else:
-        pad = int((((width / height) * image_height) - image_width) / 2.)
-        padded_image = np.ones((image_height, image_width + pad * 2, 3), dtype=np.uint8) * 255
-        # padded_image = np.zeros((image_height, image_width + pad * 2, 3), dtype=np.uint8) 
-        padded_image[:, pad:pad+image_width] = image
-        image = Image.fromarray(padded_image).resize((width, height))
-    return image 
-
-
-def _crop_and_resize(image, height=512, width=512):
-    image = np.array(image)
-    image_height, image_width, _ = image.shape
-    if image_height / image_width < height / width:
-        croped_width = int(image_height / height * width)
-        left = (image_width - croped_width) // 2
-        image = image[:, left: left+croped_width]
-        image = Image.fromarray(image).resize((width, height))
-    else:
-        croped_height = int(image_width/width*height)
-        top = (image_height - croped_height) // 2
-        image = image[top:top+croped_height, :]
-        image = Image.fromarray(image).resize((width, height))
-
-    return image
-    
-
-def write_mp4(video_path, samples, fps=14, audio_bitrate="192k"):
-    clip = ImageSequenceClip(samples, fps=fps)
-    clip.write_videofile(video_path, audio_codec="aac", audio_bitrate=audio_bitrate, 
-                         ffmpeg_params=["-crf", "18", "-preset", "slow"])
-
-
-WIDTH = 832
-HEIGHT = 480
-NUM_FRAMES = 81
-GUIDANCE_SCALE = 5.0
-VAE_SCALE_FACTOR_SPATIAL = 8
-STEP = 50
-
-
-class ModelInference:
-    def __init__(self):
-        self._pipeline_path =  "/maindata/data/shared/public/multimodal/ckpt/wan14B-compose"
-        self._model_path = os.path.join(self._pipeline_path, "transformer")
-        self._dtype = torch.bfloat16
-        self._device = "cuda"
-        self._image_encoder = CLIPVisionModel.from_pretrained(self._pipeline_path, subfolder="image_encoder", torch_dtype=torch.float32) 
-        self._vae = AutoencoderKLWan.from_pretrained(self._pipeline_path, subfolder="vae", torch_dtype=torch.float32)
-        self._transformer = A2Model.from_pretrained(self._model_path, torch_dtype=self._dtype)
-        self._transformer.to(self._device, dtype=self._dtype) 
-
-        self._pipe = A2Pipeline.from_pretrained(self._pipeline_path, transformer=self._transformer, vae=self._vae, image_encoder=self._image_encoder, torch_dtype=self._dtype)
-
-        self._scheduler = UniPCMultistepScheduler(prediction_type='flow_prediction', use_flow_sigmas=True, num_train_timesteps=1000, flow_shift=8)
-        self._pipe.scheduler = self._scheduler 
-        self._pipe.to(self._device)
-        self._video_processor = VideoProcessor(vae_scale_factor=VAE_SCALE_FACTOR_SPATIAL)
-
-    def generate_video(self, ref_img_0, ref_img_1, ref_img_2, prompt, negative_prompt, seed):
-        clip_image_list = []
-        vae_image_list = []
-        for image in [ref_img_0, ref_img_1, ref_img_2]:
-            if image is None:
-                continue
-
-            image_clip = _crop_and_resize_pad(image, height=512, width=512)
-            clip_image_list.append(image_clip)
-            image_vae = _crop_and_resize_pad(image, height=HEIGHT, width=WIDTH)
-            image_vae = self._video_processor.preprocess(image_vae, height=HEIGHT, width=WIDTH).to(memory_format=torch.contiguous_format)
-            image_vae = image_vae.unsqueeze(2).to(self._device, dtype=torch.float32)
-            vae_image_list.append(image_vae)
-
-        generator = torch.Generator(self._device).manual_seed(seed)
-        video_pt = self._pipe(
-            image_clip=clip_image_list, 
-            image_vae=vae_image_list,
-            prompt=prompt, 
-            negative_prompt=negative_prompt, 
-            height=HEIGHT, 
-            width=WIDTH, 
-            num_frames=NUM_FRAMES, 
-            guidance_scale=GUIDANCE_SCALE,
-            generator=generator,
-            output_type="pt",
-            num_inference_steps=STEP,
-            vae_combine="before",
-            # vae_repeat=False,
-        ).frames
-
-        batch_size = video_pt.shape[0]
-        batch_video_frames = []
-        for batch_idx in range(batch_size):
-            pt_image = video_pt[batch_idx]
-            pt_image = torch.stack([pt_image[i] for i in range(pt_image.shape[0])])
-
-            image_np = VaeImageProcessor.pt_to_numpy(pt_image)
-            image_pil = VaeImageProcessor.numpy_to_pil(image_np)
-            batch_video_frames.append(image_pil)
-
-        video_generate = batch_video_frames[0]
-        final_images = []
-        for q in range(len(video_generate)): 
-            frame = Image.fromarray(np.array(video_generate[q])).convert("RGB")
-            final_images.append(np.array(frame))
-        name_src = f"{time.time()}_{prompt}_{seed}"
-        name = hashlib.md5(name_src.encode()).hexdigest()
-        video_path = os.path.join(TMP_FILE_PATH, f"{name}.mp4")
-        write_mp4(video_path, final_images, fps=15)
-        return video_path
-
-
-infer = ModelInference()
-
-
-class A2ModelLoader:
+class LoadA2Model:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "pipeline_path": ("STRING", {"default": "/maindata/data/shared/public/multimodal/ckpt/wan14B-compose"})
+                "pipeline_path": ("STRING", {"default": "/path/to/model"}),
+                "dtype": (["float32", "bfloat16"],),
+                "device": ("STRING", {"default": "cuda"})
             }
         }
 
-    RETURN_TYPES = ("A2Pipeline",)
+    RETURN_TYPES = ("MODEL",)
+    RETURN_NAMES = ("a2_model",)
     FUNCTION = "load_model"
     CATEGORY = "SkyReelsA2"
 
-    def load_model(self, pipeline_path):
-        model_path = os.path.join(pipeline_path, "transformer")
-        dtype = torch.bfloat16
-        device = "cuda"
+    def load_model(self, pipeline_path, dtype, device):
+        dtype_map = {"float32": torch.float32, "bfloat16": torch.bfloat16}
+        dtype = dtype_map[dtype]
 
-        image_encoder = CLIPVisionModel.from_pretrained(pipeline_path, subfolder="image_encoder", torch_dtype=torch.float32)
+        # load models 
+        image_encoder = CLIPVisionModel.from_pretrained(pipeline_path, subfolder="image_encoder", torch_dtype=torch.float32) 
         vae = AutoencoderKLWan.from_pretrained(pipeline_path, subfolder="vae", torch_dtype=torch.float32)
-        transformer = A2Model.from_pretrained(model_path, torch_dtype=dtype).to(device)
 
-        pipe = A2Pipeline.from_pretrained(
-            pipeline_path,
-            transformer=transformer,
-            vae=vae,
-            image_encoder=image_encoder,
-            torch_dtype=dtype
-        )
+        print("load transformer...")
+        model_path = os.path.join(pipeline_path, 'transformer')
+        transformer = A2Model.from_pretrained(model_path, torch_dtype=dtype, use_safetensors=True)
+        # transformer.save_pretrained("transformer", max_shard_size="5GB") 
 
-        scheduler = UniPCMultistepScheduler(
-            prediction_type='flow_prediction',
-            use_flow_sigmas=True,
-            num_train_timesteps=1000,
-            flow_shift=8
-        )
-        pipe.scheduler = scheduler
-        pipe.to(device)
+        transformer.to(device, dtype=dtype) 
 
-        return (pipe,)
+        a2_model = A2Pipeline.from_pretrained(pipeline_path, transformer=transformer, vae=vae, image_encoder=image_encoder, torch_dtype=dtype)
+
+        scheduler = UniPCMultistepScheduler(prediction_type='flow_prediction', use_flow_sigmas=True, num_train_timesteps=1000, flow_shift=8)
+        a2_model.scheduler = scheduler 
+        a2_model.to(device)
+
+        return (a2_model,)
+
+
+class ReferenceImages:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "refer_image_paths": ("STRING", {"multiline": True, "default": "['assets/human.png', 'assets/thing.png', 'assets/env.png']"}),
+                "height": ("INT", {"default": 480}),
+                "width": ("INT", {"default": 832}),
+                "device": ("STRING", {"default": "cuda"}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE_LIST", "IMAGE_LIST")
+    RETURN_NAMES = ("clip_image_list", "vae_image_list")
+    FUNCTION = "process_images"
+    CATEGORY = "SkyReelsA2"
+
+    def process_images(self, refer_image_paths, height, width, device):
+        refer_images = eval(refer_image_paths)
+        video_processor = VideoProcessor(vae_scale_factor=8)
+        clip_image_list, vae_image_list = [], []
+
+        for image_id, image_path in enumerate(refer_images): 
+            image = load_image(image=image_path).convert("RGB")
+            # for clip 
+            image_clip = _crop_and_resize_pad(image, height=512, width=512) 
+            clip_image_list.append(image_clip)
+            
+            # for vae 
+            if image_id == 0 or image_id == 1: 
+                image_vae = _crop_and_resize_pad(image, height=height, width=width) # ref image
+            else:
+                image_vae = _crop_and_resize(image, height=height, width=width) # background image
+            
+            image_vae = video_processor.preprocess(image_vae, height=height, width=width).to(memory_format=torch.contiguous_format) # (1, 3, 480, 320)
+            image_vae = image_vae.unsqueeze(2).to(device, dtype=torch.float32)
+            vae_image_list.append(image_vae) #.to(device, dtype=dtype))
+
+        return (clip_image_list, vae_image_list)
 
 
 class A2VideoGenerator:
@@ -194,96 +100,124 @@ class A2VideoGenerator:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "pipe": ("A2Pipeline",),
-                "ref_img_0": ("IMAGE",),
-                "ref_img_1": ("IMAGE",),
-                "ref_img_2": ("IMAGE",),
-                "prompt": ("STRING", {"default": "A man is gazing at the sunset by the seaside."}),
-                "negative_prompt": ("STRING", {"default": DEFAULT_NEGATIVE_PROMPT}),
-                "seed": ("INT", {"default": 42})
+                "a2_model": ("MODEL",),
+                "clip_image_list": ("LIST",),
+                "vae_image_list": ("LIST",),
+                "prompt": ("STRING", {"default": "A man is holding a teddy bear in the forest."}),
+                "negative_prompt": ("STRING", {"default": "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards"}),
+                "height": ("INT", {"default": 480}),
+                "width": ("INT", {"default": 832}),
+                "seed": ("INT", {"default": 42}),
+                "guidance_scale": ("FLOAT", {"default": 5.0}),
+                "num_frames": ("INT", {"default": 81}),
+                "num_inference_steps": ("INT", {"default": 50}),
+                "vae_combine": (["before", "after"], {"default": "before"}),
+                "device": (["cuda", "cpu"], {"default": "cuda"})
             }
         }
 
-    RETURN_TYPES = ("IMAGE_SEQUENCE",)
-    OUTPUT_NODE = True
-    FUNCTION = "generate"
+    RETURN_TYPES = ("TENSOR",)
+    RETURN_NAMES = ("video_tensor",)
+    FUNCTION = "run_pipeline"
     CATEGORY = "SkyReelsA2"
 
-    def generate(self, pipe, ref_img_0, ref_img_1, ref_img_2, prompt, negative_prompt, seed):
-        HEIGHT, WIDTH = 480, 832
-        NUM_FRAMES = 81
-        GUIDANCE_SCALE = 5.0
-        STEP = 50
-        VAE_SCALE_FACTOR_SPATIAL = 8
-
-        video_processor = VideoProcessor(vae_scale_factor=VAE_SCALE_FACTOR_SPATIAL)
-        device = "cuda"
-
-        clip_list, vae_list = [], []
-        for image in [ref_img_0, ref_img_1, ref_img_2]:
-            if image is None:
-                continue
-            clip = _crop_and_resize_pad(image, height=512, width=512)
-            clip_list.append(clip)
-            vae = _crop_and_resize_pad(image, height=HEIGHT, width=WIDTH)
-            vae = video_processor.preprocess(vae, height=HEIGHT, width=WIDTH).to(memory_format=torch.contiguous_format)
-            vae = vae.unsqueeze(2).to(device, dtype=torch.float32)
-            vae_list.append(vae)
-
+    def run_pipeline(
+        self,
+        a2_model,
+        clip_image_list,
+        vae_image_list,
+        prompt,
+        negative_prompt,
+        height,
+        width,
+        seed,
+        guidance_scale,
+        num_frames,
+        num_inference_steps,
+        vae_combine,
+        device,
+    ):
         generator = torch.Generator(device).manual_seed(seed)
-
-        video_pt = pipe(
-            image_clip=clip_list,
-            image_vae=vae_list,
+        video_pt = a2_model(
+            image_clip=clip_image_list,
+            image_vae=vae_image_list,
             prompt=prompt,
             negative_prompt=negative_prompt,
-            height=HEIGHT,
-            width=WIDTH,
-            num_frames=NUM_FRAMES,
-            guidance_scale=GUIDANCE_SCALE,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+            guidance_scale=guidance_scale,
             generator=generator,
             output_type="pt",
-            num_inference_steps=STEP,
-            vae_combine="before"
+            num_inference_steps=num_inference_steps,
+            vae_combine=vae_combine,
         ).frames
+        return (video_pt,)
+    
 
-        batch_size = video_pt.shape[0]
-        batch_video_frames = []
-
-        for batch_idx in range(batch_size):
-            pt_image = video_pt[batch_idx]
-            pt_image = torch.stack([pt_image[i] for i in range(pt_image.shape[0])])
-            image_np = VaeImageProcessor.pt_to_numpy(pt_image)
-            image_pil = VaeImageProcessor.numpy_to_pil(image_np)
-            batch_video_frames.append(image_pil)
-
-        video_generate = batch_video_frames[0]
-        final_images = []
-        for q in range(len(video_generate)):
-            frame = Image.fromarray(np.array(video_generate[q])).convert("RGB")
-            final_images.append(frame)
-
-        return (final_images,)
-
-
-class SaveMP4Video:
+class CombineImages:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "frames": ("IMAGE_SEQUENCE",),
-                "prompt": ("STRING",),
-                "seed": ("INT",)
+                "video_tensor": ("TENSOR",),
+                "refer_image_paths": ("STRING", {"multiline": True, "default": "['assets/human.png', 'assets/thing.png', 'assets/env.png']"}),
+                "width": ("INT", {"default": 832}),
+                "height": ("INT", {"default": 480}),
             }
         }
 
-    RETURN_TYPES = ("STRING",)
-    FUNCTION = "save_video"
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("final_images",)
+    FUNCTION = "assemble"
     CATEGORY = "SkyReelsA2"
 
-    def save_video(self, frames, prompt, seed):
-        name_src = f"{time.time()}_{prompt}_{seed}"
-        name = hashlib.md5(name_src.encode()).hexdigest()
-        video_path = os.path.join(TMP_FILE_PATH, f"{name}.mp4")
-        write_mp4(video_path, [np.array(f.convert("RGB")) for f in frames], fps=15)
-        return (video_path,)
+    def assemble(self, video_tensor, refer_image_paths, width, height):
+        batch_size = video_tensor.shape[0]
+        batch_video_frames = []
+        for batch_idx in range(batch_size):
+            pt_image = video_tensor[batch_idx]
+            pt_image = torch.stack([pt_image[i] for i in range(pt_image.shape[0])])
+            pt_image = pt_image[12:]
+            image_np = VaeImageProcessor.pt_to_numpy(pt_image)
+            image_pil = VaeImageProcessor.numpy_to_pil(image_np)
+            batch_video_frames.append(image_pil)
+
+        video_generate = batch_video_frames[0] 
+        final_images = []
+        for q in range(len(video_generate)): 
+            frame1 = _crop_and_resize_pad(load_image(image=refer_image_paths[0]), height, width) 
+            frame2 = _crop_and_resize_pad(load_image(image=refer_image_paths[1]), height, width) 
+            frame3 = _crop_and_resize_pad(load_image(image=refer_image_paths[2]), height, width) 
+            frame4 = Image.fromarray(np.array(video_generate[q])).convert("RGB")
+            result = Image.new('RGB', (width * 4, height),color="white")
+            result.paste(frame1, (0, 0)) 
+            result.paste(frame2, (width, 0)) 
+            result.paste(frame3, (width*2, 0)) 
+            result.paste(frame4, (width*3, 0)) 
+            final_images.append(np.array(result))
+
+        return (final_images,)
+
+
+class SaveVideo:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "video_path": ("STRING", {"default": "output.mp4"}),
+                "final_images": ("IMAGE_LIST",),
+                "fps": ("INT", {"default": 15}),
+            }
+        }
+
+    RETURN_TYPES = ()
+    RETURN_NAMES = ()
+    FUNCTION = "save"
+    CATEGORY = "SkyReelsA2"
+
+    def save(self, video_path, final_images, fps):
+
+        write_mp4(video_path, final_images, fps=fps)
+        return ()
+    
