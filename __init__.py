@@ -1,15 +1,19 @@
-from .nodes import A2ModelLoader, A2VideoGenerator, SaveMP4Video
+from .nodes import LoadA2Model, ReferenceImages, A2VideoGenerator, CombineImages, SaveVideo
 
 NODE_CLASS_MAPPINGS = {
-    "A2 Model Loader": A2ModelLoader,
+    "Load A2 Model": LoadA2Model,
+    "Reference Images": ReferenceImages,
     "A2 Video Generator": A2VideoGenerator,
-    "Save MP4 Video": SaveMP4Video,
+    "Combine Images": CombineImages,
+    "Save Video": SaveVideo,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "A2ModelLoader": "A2 Model Loader",
+    "LoadA2Model": "Load A2 Model",
+    "ReferenceImages": "Reference Images",
     "A2VideoGenerator": "A2 Video Generator",
-    "SaveMP4Video": "Save MP4 Video",
+    "CombineImages": Combine Images,
+    "SaveVideo": Save Video,
 } 
 
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
