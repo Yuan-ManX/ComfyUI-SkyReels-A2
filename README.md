@@ -2,7 +2,7 @@
 
 Make SkyReels-A2 avialbe in ComfyUI.
 
-[SkyReels-A2](https://arxiv.org/abs/2504.02436): Compose Anything in Video Diffusion Transformers.
+[SkyReels-A2](https://github.com/SkyworkAI/SkyReels-A2): Compose Anything in Video Diffusion Transformers.
 
 
 ## Installation
