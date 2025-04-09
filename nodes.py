@@ -9,9 +9,9 @@ from diffusers import UniPCMultistepScheduler
 from diffusers.utils import export_to_video, load_image 
 from diffusers.image_processor import VaeImageProcessor
 
-from SkyReelsA2.models.transformer_a2 import A2Model 
-from SkyReelsA2.models.pipeline_a2 import A2Pipeline 
-from SkyReelsA2.models.utils import _crop_and_resize_pad, _crop_and_resize, write_mp4
+from .SkyReelsA2.models.transformer_a2 import A2Model 
+from .SkyReelsA2.models.pipeline_a2 import A2Pipeline 
+from .SkyReelsA2.models.utils import _crop_and_resize_pad, _crop_and_resize, write_mp4
 
 
 class LoadA2Model:
