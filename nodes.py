@@ -101,8 +101,8 @@ class A2VideoGenerator:
         return {
             "required": {
                 "a2_model": ("MODEL",),
-                "clip_image_list": ("LIST",),
-                "vae_image_list": ("LIST",),
+                "clip_image_list": ("IMAGE_LIST",),
+                "vae_image_list": ("IMAGE_LIST",),
                 "prompt": ("STRING", {"default": "A man is holding a teddy bear in the forest."}),
                 "negative_prompt": ("STRING", {"default": "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards"}),
                 "height": ("INT", {"default": 480}),
@@ -206,7 +206,7 @@ class SaveVideo:
         return {
             "required": {
                 "video_path": ("STRING", {"default": "output.mp4"}),
-                "final_images": ("IMAGE_LIST",),
+                "final_images": ("IMAGE",),
                 "fps": ("INT", {"default": 15}),
             }
         }
