@@ -28,7 +28,7 @@ class LoadA2Model:
     RETURN_TYPES = ("MODEL",)
     RETURN_NAMES = ("a2_model",)
     FUNCTION = "load_model"
-    CATEGORY = "SkyReelsA2"
+    CATEGORY = "SkyReels-A2"
 
     def load_model(self, pipeline_path, dtype, device):
         dtype_map = {"float32": torch.float32, "bfloat16": torch.bfloat16}
@@ -95,6 +95,44 @@ class ReferenceImages:
         return (clip_image_list, vae_image_list)
 
 
+class Prompt:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "input_prompt": ("STRING", {"default": "A man is holding a teddy bear in the forest."}),
+            }
+        }
+
+    RETURN_TYPES = ("PROMPT",)
+    RETURN_NAMES = ("prompt",)
+    FUNCTION = "load_prompt"
+    CATEGORY = "SkyReels-A2"
+
+    def load_prompt(self, input_prompt):
+        prompt = input_prompt
+        return (prompt,)
+
+
+class NegativePrompt:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "input_negative_prompt": ("STRING", {"default": "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards"}),
+            }
+        }
+
+    RETURN_TYPES = ("NEGATIVEPROMPT",)
+    RETURN_NAMES = ("negative_prompt",)
+    FUNCTION = "load_prompt"
+    CATEGORY = "SkyReels-A2"
+
+    def load_prompt(self, input_negative_prompt):
+        negative_prompt = input_negative_prompt
+        return (negative_prompt,)
+
+
 class A2VideoGenerator:
     @classmethod
     def INPUT_TYPES(cls):
@@ -103,8 +141,8 @@ class A2VideoGenerator:
                 "a2_model": ("MODEL",),
                 "clip_image_list": ("IMAGE_LIST",),
                 "vae_image_list": ("IMAGE_LIST",),
-                "prompt": ("STRING", {"default": "A man is holding a teddy bear in the forest."}),
-                "negative_prompt": ("STRING", {"default": "Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards"}),
+                "prompt": ("PROMPT",),
+                "negative_prompt": ("NEGATIVEPROMPT",),
                 "height": ("INT", {"default": 480}),
                 "width": ("INT", {"default": 832}),
                 "seed": ("INT", {"default": 42}),
@@ -119,7 +157,7 @@ class A2VideoGenerator:
     RETURN_TYPES = ("TENSOR",)
     RETURN_NAMES = ("video_tensor",)
     FUNCTION = "run_pipeline"
-    CATEGORY = "SkyReelsA2"
+    CATEGORY = "SkyReels-A2"
 
     def run_pipeline(
         self,
@@ -170,7 +208,7 @@ class CombineImages:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("final_images",)
     FUNCTION = "assemble"
-    CATEGORY = "SkyReelsA2"
+    CATEGORY = "SkyReels-A2"
 
     def assemble(self, video_tensor, refer_image_paths, width, height):
         batch_size = video_tensor.shape[0]
@@ -214,7 +252,7 @@ class SaveVideo:
     RETURN_TYPES = ()
     RETURN_NAMES = ()
     FUNCTION = "save"
-    CATEGORY = "SkyReelsA2"
+    CATEGORY = "SkyReels-A2"
 
     def save(self, video_path, final_images, fps):
 
