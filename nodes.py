@@ -95,7 +95,7 @@ class ReferenceImages:
         return (clip_image_list, vae_image_list)
 
 
-class Prompt:
+class A2Prompt:
     @classmethod
     def INPUT_TYPES(cls):
         return {
